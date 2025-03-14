@@ -1,0 +1,31 @@
+name: Sync Project Data to Sheets
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Runs at Midnight UTC every day
+  workflow_dispatch: 
+
+jobs:
+  sync-projects:
+    runs-on: ubuntu-latest
+    env:
+      NEXT_PUBLIC_SUPABASE_URL2: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL2 }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY2: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY2 }}
+      NEXT_PUBLIC_GOOGLE_SCRIPT_URL: ${{ secrets.NEXT_PUBLIC_GOOGLE_SCRIPT_URL }}
+      NEXT_PUBLIC_MILESTONES_URL: 'https://milestones.projectcatalyst.io'
+      NEXT_PUBLIC_PROJECT_CONFIGS: ${{ secrets.NEXT_PUBLIC_PROJECT_CONFIGS }}
+      KOIOS_API_KEY: ${{ secrets.KOIOS_API_KEY }}
+      PROJECT_IDS: ${{ secrets.PROJECT_IDS }}
+    steps:
+      - uses: actions/checkout@v2
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '16'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Run sync script
+        run: node scripts/sync-projects.js
