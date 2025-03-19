@@ -1,8 +1,6 @@
 // scripts/sync-projects.js
 const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
 const { fetchWalletTransactions } = require('./koiosWrapper');
 const csvService = require('./csvService');
 const { WebhookClient } = require('discord.js');
@@ -48,20 +46,76 @@ async function getProposalDetails(projectId) {
 }
 
 /**
- * Fetches milestone data from the Catalystmilestones API.
+ * Retrieves the proposal ID from Supabase.
  */
-async function fetchMilestoneData(proposalId) {
-  console.log(`Fetching milestone data for proposal ${proposalId}`);
+async function getProposalId(projectId) {
+  console.log(`Getting proposal ID for project ${projectId}`);
 
-  try {
-    const endpoint = `${MILESTONES_BASE_URL}/api/milestones/${proposalId}`;
-    console.log(`Making request to: ${endpoint}`);
-    const response = await axios.get(endpoint);
-    return response.data;
-  } catch (error) {
-    console.error(`Error fetching milestone data for proposal ${proposalId}:`, error);
-    return null;
+  const { data, error } = await supabase
+    .from('proposals')
+    .select('id')
+    .eq('project_id', projectId)
+    .single();
+
+  if (error) {
+    console.error('Error fetching proposal ID:', error);
+    throw error;
   }
+
+  console.log(`Found proposal ID ${data?.id} for project ${projectId}`);
+  return data?.id;
+}
+
+/**
+ * Fetches milestone data using Supabase.
+ */
+async function fetchMilestoneData(projectId, milestone) {
+  const proposalId = await getProposalId(projectId);
+  console.log(`Fetching milestone data for proposal ${proposalId}, milestone ${milestone}`);
+
+  const { data, error } = await supabase
+    .from('soms')
+    .select(`
+      month,
+      cost,
+      completion,
+      som_reviews!inner(
+        outputs_approves,
+        success_criteria_approves,
+        evidence_approves,
+        current
+      ),
+      poas!inner(
+        poas_reviews!inner(
+          content_approved,
+          current
+        ),
+        signoffs(created_at)
+      )
+    `)
+    .eq('proposal_id', proposalId)
+    .eq('milestone', milestone)
+    .eq('som_reviews.current', true)
+    .eq('poas.poas_reviews.current', true)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (error) {
+    console.error('Error fetching milestone data:', error);
+    throw error;
+  }
+
+  if (data?.length && data[0].poas?.length > 1) {
+    const sortedPoas = [...data[0].poas].sort((a, b) => {
+      const dateA = a.signoffs?.[0]?.created_at || '0';
+      const dateB = b.signoffs?.[0]?.created_at || '0';
+      return dateB.localeCompare(dateA);
+    });
+    data[0].poas = [sortedPoas[0]];
+  }
+
+  console.log('Raw milestone data:', JSON.stringify(data, null, 2));
+  return data;
 }
 
 /**
@@ -146,33 +200,6 @@ function calculateMonthlyBudget(proposal, projectConfig) {
 }
 
 /**
- * Processes milestone data into a format suitable for presentation.
- */
-function processMilestoneData(milestoneData, proposal, snapshots) {
-  if (!milestoneData || !milestoneData.milestones || !Array.isArray(milestoneData.milestones)) {
-    return [];
-  }
-
-  return milestoneData.milestones.map(milestone => {
-    // Find corresponding snapshot
-    const snapshot = snapshots.find(snap => snap.milestone_id === milestone.id);
-
-    // Calculate completion status
-    const isCompleted = snapshot ? true : false;
-    const completionDate = snapshot ? new Date(snapshot.created_at).toISOString().split('T')[0] : '';
-
-    return {
-      id: milestone.id,
-      title: milestone.title,
-      description: milestone.description,
-      isCompleted,
-      completionDate,
-      evidenceUrl: snapshot ? snapshot.url : ''
-    };
-  });
-}
-
-/**
  * Processes wallet transaction data.
  */
 async function processWalletTransactions(wallet, dateRanges) {
@@ -224,23 +251,60 @@ async function processProject(projectId) {
       throw new Error(`No proposal found for project ${projectId}`);
     }
 
-    // Step 2: Get proposal ID
-    const proposalId = proposal.id;
+    // Step 2: Fetch snapshot data
+    const snapshots = await fetchSnapshotData(projectId);
 
-    // Step 3: Fetch milestone data
-    const milestoneData = await fetchMilestoneData(proposalId);
-
-    // Step 4: Fetch snapshot data
-    const snapshots = await fetchSnapshotData(proposalId);
-
-    // Step 5: Process wallet transactions
+    // Step 3: Process wallet transactions
     const transactions = await processWalletTransactions(wallet, projectConfig.dateRanges);
 
-    // Step 6: Calculate monthly budget
+    // Step 4: Calculate monthly budget
     const financials = calculateMonthlyBudget(proposal, projectConfig);
 
-    // Step 7: Process milestone data
-    const processedMilestones = processMilestoneData(milestoneData, proposal, snapshots);
+    // Step 5: Process milestone data
+    let processedMilestones = [];
+    if (snapshots.length > 0) {
+      for (const snapshot of snapshots) {
+        const milestoneData = await fetchMilestoneData(projectId, snapshot.milestone);
+
+        processedMilestones.push({
+          id: snapshot.milestone,
+          title: `Milestone ${snapshot.milestone}`,
+          description: snapshot.description || '',
+          isCompleted:
+            milestoneData?.[0]?.som_reviews?.[0]?.outputs_approves &&
+            milestoneData?.[0]?.som_reviews?.[0]?.success_criteria_approves &&
+            milestoneData?.[0]?.som_reviews?.[0]?.evidence_approves,
+          completionDate: snapshot.completion_date || '',
+          evidenceUrl: snapshot.evidence_url || '',
+          month: milestoneData?.[0]?.month,
+          cost: milestoneData?.[0]?.cost,
+          completion: milestoneData?.[0]?.completion,
+          outputs_approved: milestoneData?.[0]?.som_reviews?.[0]?.outputs_approves || false,
+          success_criteria_approved: milestoneData?.[0]?.som_reviews?.[0]?.success_criteria_approves || false,
+          evidence_approved: milestoneData?.[0]?.som_reviews?.[0]?.evidence_approves || false,
+          poa_content_approved: milestoneData?.[0]?.poas?.[0]?.poas_reviews?.[0]?.content_approved || false
+        });
+      }
+    } else {
+      // For new proposals without milestone data yet
+      for (let i = 1; i <= proposal.milestones_qty; i++) {
+        processedMilestones.push({
+          id: i,
+          title: `Milestone ${i}`,
+          description: '',
+          isCompleted: false,
+          completionDate: '',
+          evidenceUrl: '',
+          month: i,
+          cost: Math.round(proposal.budget / proposal.milestones_qty),
+          completion: 0,
+          outputs_approved: false,
+          success_criteria_approved: false,
+          evidence_approved: false,
+          poa_content_approved: false
+        });
+      }
+    }
 
     // Calculate total funds received
     const totalReceived = transactions.reduce((sum, tx) => sum + tx.amount, 0);
@@ -294,7 +358,7 @@ async function processProject(projectId) {
         proposal.funds_distributed || 0,
         remainingFunds,
         proposal.milestones_qty,
-        `${MILESTONES_BASE_URL}/proposals/${proposalId}`
+        `${MILESTONES_BASE_URL}/projects/${projectId}`
       ]
     ];
 
@@ -335,78 +399,6 @@ async function sendDiscordNotification(message) {
     console.log('Discord notification sent successfully');
   } catch (error) {
     console.error('Error sending Discord notification:', error);
-  }
-}
-
-/**
- * Updates README.md with project data.
- */
-async function updateReadme(projects) {
-  try {
-    const readmePath = path.join(__dirname, '..', 'README.md');
-    let readmeContent = `# Cardano Catalyst Monitoring Dashboard\n\n`;
-    readmeContent += `Last updated: ${new Date().toISOString().split('T')[0]}\n\n`;
-
-    readmeContent += `## Project Summary\n\n`;
-    readmeContent += `| Project ID | Title | Budget | Funds Received | Remaining | Milestones | Progress |\n`;
-    readmeContent += `|------------|-------|--------|---------------|-----------|------------|----------|\n`;
-
-    projects.forEach(project => {
-      const totalMilestones = project.milestones.length;
-      const completedMilestones = project.milestones.filter(m => m.isCompleted).length;
-      const progressPercentage = totalMilestones > 0
-        ? Math.round((completedMilestones / totalMilestones) * 100)
-        : 0;
-
-      readmeContent += `| ${project.projectId} | ${project.proposal.title} | ${project.financials.totalBudget} | `;
-      readmeContent += `${project.transactions.reduce((sum, tx) => sum + tx.amount, 0)} | `;
-      readmeContent += `${project.financials.totalBudget - project.transactions.reduce((sum, tx) => sum + tx.amount, 0)} | `;
-      readmeContent += `${completedMilestones}/${totalMilestones} | ${progressPercentage}% |\n`;
-    });
-
-    readmeContent += `\n## Project Details\n\n`;
-
-    projects.forEach(project => {
-      readmeContent += `### ${project.proposal.title} (${project.projectId})\n\n`;
-
-      // Milestones
-      readmeContent += `#### Milestones\n\n`;
-      readmeContent += `| ID | Title | Status | Completion Date |\n`;
-      readmeContent += `|----|-------|--------|----------------|\n`;
-
-      project.milestones.forEach(milestone => {
-        readmeContent += `| ${milestone.id} | ${milestone.title} | `;
-        readmeContent += `${milestone.isCompleted ? '✅ Completed' : '⏳ Pending'} | `;
-        readmeContent += `${milestone.completionDate || '-'} |\n`;
-      });
-
-      // Financial information
-      readmeContent += `\n#### Financial Information\n\n`;
-      readmeContent += `- **Total Budget**: ${project.financials.totalBudget} ADA\n`;
-      readmeContent += `- **Monthly Budget**: ${Math.round(project.financials.monthlyBudget)} ADA\n`;
-      readmeContent += `- **Project Duration**: ${project.financials.months} months `;
-      readmeContent += `(${project.financials.startDate} to ${project.financials.endDate})\n\n`;
-
-      // Collaborator allocations
-      if (project.financials.collaboratorAllocations.length > 0) {
-        readmeContent += `#### Collaborator Allocations\n\n`;
-        readmeContent += `| Collaborator | Monthly Amount | Total Amount |\n`;
-        readmeContent += `|-------------|----------------|-------------|\n`;
-
-        project.financials.collaboratorAllocations.forEach(collaborator => {
-          readmeContent += `| ${collaborator.name} | `;
-          readmeContent += `${Math.round(collaborator.monthlyAmount)} ADA | `;
-          readmeContent += `${Math.round(collaborator.totalAmount)} ADA |\n`;
-        });
-      }
-
-      readmeContent += `\n`;
-    });
-
-    fs.writeFileSync(readmePath, readmeContent);
-    console.log('README.md updated successfully');
-  } catch (error) {
-    console.error('Error updating README:', error);
   }
 }
 
@@ -479,9 +471,6 @@ async function main() {
     process.exit(1);
   }
 
-  // Update README.md
-  await updateReadme(processedProjects);
-
   // Send notification
   const totalProjects = processedProjects.length;
   const totalMilestones = processedProjects.reduce(
@@ -494,7 +483,7 @@ async function main() {
   const notificationMessage = `✅ Catalyst monitoring update completed!\n` +
     `- ${totalProjects} projects processed\n` +
     `- ${completedMilestones}/${totalMilestones} milestones completed\n` +
-    `- Data updated in CSV files and README`;
+    `- Data updated in CSV files`;
 
   await sendDiscordNotification(notificationMessage);
 
