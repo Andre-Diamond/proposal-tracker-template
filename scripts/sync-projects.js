@@ -8,6 +8,48 @@ const { WebhookClient } = require('discord.js');
 // Load project config
 const projectsConfig = require('../src/config/projects.json');
 
+/**
+ * Fetches the wallet balance in ADA
+ * @param {string} walletAddress - The wallet address to check
+ * @returns {Promise<number>} - The wallet balance in ADA
+ */
+async function fetchWalletBalance(walletAddress) {
+  if (!walletAddress) {
+    console.log('Wallet address not provided');
+    return 0;
+  }
+  try {
+    const response = await axios.get(`https://pool.pm/wallet/${walletAddress}?preview=true`);
+    console.log('Pool.pm API Response:', response.data);
+    if (response.data && typeof response.data.lovelaces === 'number') {
+      return response.data.lovelaces / 1000000; // Convert lovelaces to ADA
+    } else {
+      console.log('Unexpected API response structure:', response.data);
+      return 0;
+    }
+  } catch (error) {
+    console.error('Error fetching wallet balance:', error);
+    return 0;
+  }
+}
+
+/**
+ * Fetches the current ADA/USD exchange rate
+ * @returns {Promise<number>} - The current ADA/USD exchange rate
+ */
+async function fetchAdaExchangeRate() {
+  try {
+    const response = await axios.get('https://api.kraken.com/0/public/Ticker?pair=ADAUSD');
+    console.log('Kraken API Response:', response.data);
+    if (response.data.result && response.data.result.ADAUSD) {
+      return parseFloat(response.data.result.ADAUSD.c[0]);
+    }
+  } catch (error) {
+    console.error('Error fetching from Kraken:', error);
+  }
+  return 0;
+}
+
 // Initialize constants
 const MILESTONES_BASE_URL = process.env.NEXT_PUBLIC_MILESTONES_URL || 'https://milestones.projectcatalyst.io';
 console.log('Environment check:');
@@ -458,12 +500,25 @@ async function main() {
   // Get organization budget settings
   const organizations = projectsConfig.globalSettings?.organizations || [];
 
+  // Fetch current ADA/USD rate
+  const adaUsdRate = await fetchAdaExchangeRate();
+  console.log('Current ADA/USD rate:', adaUsdRate);
+
   // Create global financials report
   let globalFinancialsForSheet = [];
   for (const org of organizations) {
-    const { name, realMonthlyBudget, maxMonthlyBudget } = org;
-    const monthsWithRealBudget = realMonthlyBudget > 0 ? totalBudgetAll / realMonthlyBudget : 0;
-    const monthsWithMaxBudget = maxMonthlyBudget > 0 ? totalBudgetAll / maxMonthlyBudget : 0;
+    const { name, realMonthlyBudget, maxMonthlyBudget, wallet } = org;
+
+    // Fetch actual wallet balance
+    const walletBalanceAda = await fetchWalletBalance(wallet);
+    console.log(`Wallet balance for ${name}:`, walletBalanceAda, 'ADA');
+
+    // Calculate USD values
+    const walletBalanceUsd = walletBalanceAda * adaUsdRate;
+
+    // Calculate months based on actual wallet balance
+    const monthsWithRealBudget = realMonthlyBudget > 0 ? walletBalanceAda / realMonthlyBudget : 0;
+    const monthsWithMaxBudget = maxMonthlyBudget > 0 ? walletBalanceAda / maxMonthlyBudget : 0;
 
     globalFinancialsForSheet.push([
       'ALL',
@@ -474,7 +529,9 @@ async function main() {
       maxMonthlyBudget,
       monthsWithMaxBudget,
       totalReceivedAll,
-      totalBudgetAll - totalReceivedAll
+      totalBudgetAll - totalReceivedAll,
+      walletBalanceAda,
+      walletBalanceUsd
     ]);
   }
 
@@ -520,7 +577,9 @@ async function main() {
         'Max Monthly Budget',
         'Months with Max Budget',
         'Total Received',
-        'Remaining Funds'
+        'Remaining Funds',
+        'Wallet Balance (ADA)',
+        'Wallet Balance (USD)'
       ];
       await csvService.updateCsv('global_financials', globalFinancialsForSheet, globalFinancialHeaders);
       console.log('Global Financials CSV file updated successfully');
