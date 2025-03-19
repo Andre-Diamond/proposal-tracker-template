@@ -1,6 +1,20 @@
 {
   "projects": [
     {
+      "project_id": "1300134",
+      "wallet": "addr1q9fkr36a5kmtfdp9atpvy6jrmtrhyzmkj29x0t5pmrgkk9xq3upff6k44dawpnj5w8w5suq8jxff0w54yv90yte9u46stwsezf",
+      "collaborators": [
+        {
+          "name": "Collaborator 1",
+          "amount": 40000
+        }
+      ],
+      "dateRanges": {
+        "start": "2025-01-01",
+        "end": "2025-12-31"
+      }
+    },
+    {
       "project_id": "1300135",
       "wallet": "addr1qyufft4xtju8ges92x2ar3e57wsx82q0542nr2athfm58cxq3upff6k44dawpnj5w8w5suq8jxff0w54yv90yte9u46sfr305y",
       "collaborators": [
