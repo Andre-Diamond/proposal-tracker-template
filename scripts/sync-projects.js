@@ -189,13 +189,18 @@ function calculateMonthlyBudget(proposal, projectConfig) {
     }
   }) || [];
 
+  // Calculate funds left for main organization
+  const totalCollaboratorFunds = collaboratorAllocations.reduce((sum, collab) => sum + collab.totalAmount, 0);
+  const organizationFunds = totalBudget - totalCollaboratorFunds;
+
   return {
     totalBudget,
     monthlyBudget,
     months,
     startDate: startDate.toISOString().split('T')[0],
     endDate: endDate.toISOString().split('T')[0],
-    collaboratorAllocations
+    collaboratorAllocations,
+    organizationFunds
   };
 }
 
@@ -344,6 +349,16 @@ async function processProject(projectId) {
       tx.metadata
     ]);
 
+    // Format collaborators for CSV files
+    const collaboratorsForSheet = financials.collaboratorAllocations.map(collaborator => [
+      projectId,
+      proposal.title,
+      financials.totalBudget,
+      collaborator.name,
+      collaborator.totalAmount,
+      financials.organizationFunds
+    ]);
+
     // Format financials for CSV files
     const financialsForSheet = [
       [
@@ -355,7 +370,8 @@ async function processProject(projectId) {
         financials.startDate,
         financials.endDate,
         totalReceived,
-        remainingFunds
+        remainingFunds,
+        financials.organizationFunds
       ]
     ];
 
@@ -382,7 +398,8 @@ async function processProject(projectId) {
       milestonesForSheet,
       transactionsForSheet,
       financialsForSheet,
-      proposalForSheet
+      proposalForSheet,
+      collaboratorsForSheet
     };
   } catch (error) {
     console.error(`Error processing project ${projectId}:`, error);
@@ -429,6 +446,7 @@ async function main() {
   let allTransactions = [];
   let allFinancials = [];
   let allProposals = [];
+  let allCollaborators = [];
   let processedProjects = [];
 
   for (const projectId of projectIds) {
@@ -440,6 +458,7 @@ async function main() {
       allTransactions = [...allTransactions, ...projectData.transactionsForSheet];
       allFinancials = [...allFinancials, ...projectData.financialsForSheet];
       allProposals = [...allProposals, ...projectData.proposalForSheet];
+      allCollaborators = [...allCollaborators, ...projectData.collaboratorsForSheet];
 
       processedProjects.push(projectData);
 
@@ -447,6 +466,35 @@ async function main() {
     } catch (error) {
       console.error(`Failed to process project ${projectId}:`, error);
     }
+  }
+
+  // Calculate global financials
+  const totalBudgetAll = processedProjects.reduce((sum, project) =>
+    sum + project.financials.totalBudget, 0);
+  const totalReceivedAll = processedProjects.reduce((sum, project) =>
+    sum + project.transactions.reduce((txSum, tx) => txSum + tx.amount, 0), 0);
+
+  // Get organization budget settings
+  const organizations = projectsConfig.globalSettings?.organizations || [];
+
+  // Create global financials report
+  let globalFinancialsForSheet = [];
+  for (const org of organizations) {
+    const { name, realMonthlyBudget, maxMonthlyBudget } = org;
+    const monthsWithRealBudget = realMonthlyBudget > 0 ? totalBudgetAll / realMonthlyBudget : 0;
+    const monthsWithMaxBudget = maxMonthlyBudget > 0 ? totalBudgetAll / maxMonthlyBudget : 0;
+
+    globalFinancialsForSheet.push([
+      'ALL',
+      name,
+      totalBudgetAll,
+      realMonthlyBudget,
+      monthsWithRealBudget,
+      maxMonthlyBudget,
+      monthsWithMaxBudget,
+      totalReceivedAll,
+      totalBudgetAll - totalReceivedAll
+    ]);
   }
 
   // Update CSV files with processed data
@@ -481,15 +529,57 @@ async function main() {
     }
 
     if (allFinancials.length > 0) {
-      const financialHeaders = ['Project ID', 'Project Title', 'Total Budget', 'Monthly Budget', 'Months', 'Start Date', 'End Date', 'Total Received', 'Remaining Funds'];
+      const financialHeaders = [
+        'Project ID',
+        'Project Title',
+        'Total Budget',
+        'Monthly Budget',
+        'Months',
+        'Start Date',
+        'End Date',
+        'Total Received',
+        'Remaining Funds',
+        'Organization Funds'
+      ];
       await csvService.updateCsv('financials', allFinancials, financialHeaders);
       console.log('Financials CSV file updated successfully');
+    }
+
+    // Add global financials sheet
+    if (globalFinancialsForSheet.length > 0) {
+      const globalFinancialHeaders = [
+        'Projects',
+        'Organization',
+        'Total Budget All Projects',
+        'Real Monthly Budget',
+        'Months with Real Budget',
+        'Max Monthly Budget',
+        'Months with Max Budget',
+        'Total Received',
+        'Remaining Funds'
+      ];
+      await csvService.updateCsv('global_financials', globalFinancialsForSheet, globalFinancialHeaders);
+      console.log('Global Financials CSV file updated successfully');
     }
 
     if (allProposals.length > 0) {
       const proposalHeaders = ['Project ID', 'Title', 'Budget', 'Funds Distributed', 'Remaining Funds', 'Milestones Quantity', 'Milestone URL'];
       await csvService.updateCsv('proposals', allProposals, proposalHeaders);
       console.log('Proposals CSV file updated successfully');
+    }
+
+    // Add collaborators sheet
+    if (allCollaborators.length > 0) {
+      const collaboratorHeaders = [
+        'Project ID',
+        'Project Title',
+        'Total Budget',
+        'Collaborator Name',
+        'Funds Allocated to Collaborator',
+        'Funds Left to Organization'
+      ];
+      await csvService.updateCsv('collaborators', allCollaborators, collaboratorHeaders);
+      console.log('Collaborators CSV file updated successfully');
     }
   } catch (error) {
     console.error('Error updating CSV files:', error);
@@ -505,10 +595,12 @@ async function main() {
   const completedMilestones = processedProjects.reduce(
     (sum, project) => sum + project.milestones.filter(m => m.isCompleted).length, 0
   );
+  const totalCollaborators = allCollaborators.length;
 
   const notificationMessage = `✅ Catalyst monitoring update completed!\n` +
     `- ${totalProjects} projects processed\n` +
     `- ${completedMilestones}/${totalMilestones} milestones completed\n` +
+    `- ${totalCollaborators} collaborators tracked\n` +
     `- Data updated in CSV files`;
 
   await sendDiscordNotification(notificationMessage);
