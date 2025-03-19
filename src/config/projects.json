@@ -29,7 +29,8 @@
       {
         "name": "Mesh",
         "realMonthlyBudget": 2000,
-        "maxMonthlyBudget": 5000
+        "maxMonthlyBudget": 5000,
+        "wallet": "stake1u8qg7q55at26k7hqee28rh2gwqrery5hh22jxzhj9uj72agv45wv8"
       }
     ]
   }
