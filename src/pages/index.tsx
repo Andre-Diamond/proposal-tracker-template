@@ -1,178 +1,150 @@
 // src/pages/index.tsx
 import { useEffect, useState } from 'react';
-import projects from '../config/projects.json';
-import SheetFetcher from '../components/SheetFetcher';
-import TxTester from '../components/TxTester';
 
 interface Project {
   project_id: string;
-  wallet_address: string;
+  name?: string;
+  status?: string;
+  budget?: string;
 }
 
-interface TxData {
-  projectId: string;
-  txs: any; // You can refine this type according to the Koios API response
+interface Milestone {
+  title: string;
+  status: string;
+  due_date: string;
+  [key: string]: string;
 }
 
-interface TxInfo {
-  [key: string]: any;
+interface Transaction {
+  date: string;
+  amount: string;
+  type: string;
+  [key: string]: string;
+}
+
+interface Financial {
+  total_budget: string;
+  spent: string;
+  remaining: string;
+  [key: string]: string;
+}
+
+interface ProjectData extends Omit<Project, 'project_id'> {
+  project_id: string;
+  milestones: Milestone[];
+  transactions: Transaction[];
+  financials: Financial;
 }
 
 export default function Home() {
-  const [data, setData] = useState<TxData[]>([]);
-  // State for Transaction Explorer
-  const [txids, setTxids] = useState<string[]>([]);
-  const [selectedTxInfo, setSelectedTxInfo] = useState<TxInfo | null>(null);
-  const [isLoadingTxids, setIsLoadingTxids] = useState<boolean>(false);
-  const [isLoadingTxInfo, setIsLoadingTxInfo] = useState<boolean>(false);
+  const [projectsData, setProjectsData] = useState<ProjectData[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // (Optional) Existing logic: fetch tx data for each project
   useEffect(() => {
-    const fetchTxData = async () => {
-      const txData = await Promise.all(
-        projects.projects.map(async (project: Project) => {
-          const response = await fetch('/api/getAddressTxs', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ wallet: project.wallet_address }),
-          });
-
-          if (!response.ok) {
-            console.error(`Error fetching data for wallet ${project.wallet_address}`);
-            return { projectId: project.project_id, txs: null };
-          }
-
-          const data = await response.json();
-          return { projectId: project.project_id, txs: data };
-        })
-      );
-      setData(txData);
+    const fetchProjectData = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch('/api/projects');
+        if (!response.ok) {
+          throw new Error('Failed to fetch project data');
+        }
+        const data = await response.json();
+        setProjectsData(data);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'An error occurred');
+        console.error('Error fetching project data:', err);
+      } finally {
+        setLoading(false);
+      }
     };
 
-    fetchTxData();
+    fetchProjectData();
   }, []);
 
-  // Fetch TXIDs for a wallet – here we use the first project for demonstration.
-  const fetchTxids = async () => {
-    if (projects.projects.length === 0) return;
-    setIsLoadingTxids(true);
-    setSelectedTxInfo(null); // Reset any previously selected transaction info
-
-    // Using the first project's wallet address for this example.
-    const wallet = projects.projects[0].wallet_address;
-
-    try {
-      const response = await fetch('/api/getAddressTxs', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ wallet }),
-      });
-
-      if (!response.ok) {
-        console.error(`Error fetching txids for wallet ${wallet}`);
-        setIsLoadingTxids(false);
-        return;
-      }
-
-      const txData = await response.json();
-
-      // Assume txData is either an array of transactions or an object with an array property.
-      let txArray: any[] = [];
-      if (Array.isArray(txData)) {
-        txArray = txData;
-      } else if (txData && Array.isArray(txData.txs)) {
-        txArray = txData.txs;
-      }
-
-      // Extract the tx_hash from each transaction and take the first 10.
-      const txidsList = txArray.map((tx) => tx.tx_hash).slice(0, 10);
-      setTxids(txidsList);
-    } catch (error) {
-      console.error("Error fetching txids:", error);
-    } finally {
-      setIsLoadingTxids(false);
-    }
-  };
-
-  // Fetch detailed transaction info for a given txid.
-  // Only show outputs sent to the wallet used for fetching TXIDs.
-  const fetchTxInfo = async (txid: string) => {
-    setIsLoadingTxInfo(true);
-    try {
-      const response = await fetch('/api/txInfo', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ txid }),
-      });
-
-      if (!response.ok) {
-        console.error(`Error fetching tx info for txid ${txid}`);
-        setIsLoadingTxInfo(false);
-        return;
-      }
-
-      const txInfoData = await response.json();
-      // txInfoData is assumed to be an array (or a single object) containing the transaction info.
-      const txInfoObj = Array.isArray(txInfoData) ? txInfoData[0] : txInfoData;
-
-      // Use the same wallet that was used for fetching TXIDs.
-      const wallet = projects.projects[0].wallet_address;
-
-      // Filter outputs for the wallet address.
-      const outputsForWallet = txInfoObj.outputs.filter(
-        (output: any) => output.payment_addr?.bech32 === wallet
-      );
-
-      // Set the filtered outputs as the transaction info to display.
-      setSelectedTxInfo({ outputs: outputsForWallet });
-    } catch (error) {
-      console.error("Error fetching tx info:", error);
-    } finally {
-      setIsLoadingTxInfo(false);
-    }
-  };
-
   return (
-    <div className="home-container">
-      <SheetFetcher/>
-      <TxTester />
-      <h1>Project Dashboard</h1>
-      <hr />
+    <div className="home-container p-4">
+      <h1 className="text-2xl font-bold mb-4">Project Dashboard</h1>
 
-      <h2>Transaction Explorer</h2>
-      <button onClick={fetchTxids} disabled={isLoadingTxids}>
-        {isLoadingTxids ? 'Fetching TXIDs...' : 'Fetch TXIDs'}
-      </button>
+      {loading && <p className="text-gray-600">Loading project data...</p>}
+      {error && <p className="text-red-600">Error: {error}</p>}
 
-      {txids.length > 0 && (
-        <div className="txid-list">
-          <h3>Last 10 TXIDs:</h3>
-          {txids.map((txid) => (
-            <button
-              key={txid}
-              onClick={() => fetchTxInfo(txid)}
-              disabled={isLoadingTxInfo}
-              style={{ margin: '0.5rem' }}
-            >
-              {txid}
-            </button>
+      {projectsData.length > 0 && (
+        <div className="space-y-6">
+          {projectsData.map((project) => (
+            <div key={project.project_id} className="border rounded-lg p-4 shadow">
+              <h2 className="text-xl font-semibold mb-2">Project {project.project_id}</h2>
+
+              {/* Project Details */}
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <h3 className="font-medium">Project Details</h3>
+                  <p>Name: {project.name || 'N/A'}</p>
+                  <p>Status: {project.status || 'N/A'}</p>
+                  <p>Budget: {project.budget || 'N/A'}</p>
+                </div>
+
+                {/* Financials */}
+                <div>
+                  <h3 className="font-medium">Financial Summary</h3>
+                  <p>Total Budget: {project.financials?.total_budget || 'N/A'}</p>
+                  <p>Spent: {project.financials?.spent || 'N/A'}</p>
+                  <p>Remaining: {project.financials?.remaining || 'N/A'}</p>
+                </div>
+              </div>
+
+              {/* Milestones */}
+              <div className="mt-4">
+                <h3 className="font-medium mb-2">Milestones</h3>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full table-auto">
+                    <thead>
+                      <tr className="bg-gray-100">
+                        <th className="px-4 py-2">Title</th>
+                        <th className="px-4 py-2">Status</th>
+                        <th className="px-4 py-2">Due Date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {project.milestones.map((milestone: Milestone, index: number) => (
+                        <tr key={index} className="border-b">
+                          <td className="px-4 py-2">{milestone.title || 'N/A'}</td>
+                          <td className="px-4 py-2">{milestone.status || 'N/A'}</td>
+                          <td className="px-4 py-2">{milestone.due_date || 'N/A'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Recent Transactions */}
+              <div className="mt-4">
+                <h3 className="font-medium mb-2">Recent Transactions</h3>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full table-auto">
+                    <thead>
+                      <tr className="bg-gray-100">
+                        <th className="px-4 py-2">Date</th>
+                        <th className="px-4 py-2">Amount</th>
+                        <th className="px-4 py-2">Type</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {project.transactions.map((tx: Transaction, index: number) => (
+                        <tr key={index} className="border-b">
+                          <td className="px-4 py-2">{tx.date || 'N/A'}</td>
+                          <td className="px-4 py-2">{tx.amount || 'N/A'}</td>
+                          <td className="px-4 py-2">{tx.type || 'N/A'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
           ))}
-        </div>
-      )}
-
-      {selectedTxInfo && (
-        <div className="tx-info">
-          <h3>
-            Transaction Outputs Sent to Wallet{' '}
-            <code>{projects.projects[0].wallet_address}</code>
-          </h3>
-          <pre>{JSON.stringify(selectedTxInfo, null, 2)}</pre>
         </div>
       )}
     </div>
