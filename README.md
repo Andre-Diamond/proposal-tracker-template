@@ -1,31 +1,13 @@
-# Cardano Catalyst Monitoring Dashboard
+# 🚀 Project Automation with CSV Files & GitHub Actions
 
-Last updated: 2025-03-19
+This repository automates the tracking of projects, transactions, and milestones using **CSV files** stored in the repository and **GitHub Actions**. The Next.js app is included for potential future developments, but the focus is on the scripts.
 
-## Project Summary
+## Data Storage
 
-| Project ID | Title | Budget | Funds Received | Remaining | Milestones | Progress |
-|------------|-------|--------|---------------|-----------|------------|----------|
-| 1300134 | Mesh: Cquisitor - Transaction Investigation Tool | 200000 | 32001 | 167999 | 0/0 | 0% |
+Project data is stored in CSV files in the `data/` directory:
+- `proposals.csv` - Summary of all tracked projects
+- `milestones.csv` - Detailed milestone information for each project
+- `transactions.csv` - Wallet transaction history
+- `financials.csv` - Financial metrics and budget information
 
-## Project Details
-
-### Mesh: Cquisitor - Transaction Investigation Tool (1300134)
-
-#### Milestones
-
-| ID | Title | Status | Completion Date |
-|----|-------|--------|----------------|
-
-#### Financial Information
-
-- **Total Budget**: 200000 ADA
-- **Monthly Budget**: 18182 ADA
-- **Project Duration**: 11 months (2025-01-01 to 2025-12-31)
-
-#### Collaborator Allocations
-
-| Collaborator | Monthly Amount | Total Amount |
-|-------------|----------------|-------------|
-| Collaborator 1 | 3636 ADA | 40000 ADA |
-
+These files are automatically updated by a daily GitHub Actions workflow and committed to the repository for transparency and version control.
