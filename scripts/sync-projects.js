@@ -513,12 +513,13 @@ async function main() {
     const walletBalanceAda = await fetchWalletBalance(wallet);
     console.log(`Wallet balance for ${name}:`, walletBalanceAda, 'ADA');
 
-    // Calculate USD values
-    const walletBalanceUsd = walletBalanceAda * adaUsdRate;
+    // Calculate USD values with 2 decimal places
+    const walletBalanceUsd = Number((walletBalanceAda * adaUsdRate).toFixed(2));
+    const formattedWalletBalanceAda = Number(walletBalanceAda.toFixed(2));
 
     // Calculate months based on actual wallet balance
-    const monthsWithRealBudget = realMonthlyBudget > 0 ? walletBalanceAda / realMonthlyBudget : 0;
-    const monthsWithMaxBudget = maxMonthlyBudget > 0 ? walletBalanceAda / maxMonthlyBudget : 0;
+    const monthsWithRealBudget = realMonthlyBudget > 0 ? Math.round(walletBalanceAda / realMonthlyBudget) : 0;
+    const monthsWithMaxBudget = maxMonthlyBudget > 0 ? Math.round(walletBalanceAda / maxMonthlyBudget) : 0;
 
     globalFinancialsForSheet.push([
       'ALL',
@@ -530,7 +531,7 @@ async function main() {
       monthsWithMaxBudget,
       totalReceivedAll,
       totalBudgetAll - totalReceivedAll,
-      walletBalanceAda,
+      formattedWalletBalanceAda,
       walletBalanceUsd
     ]);
   }
