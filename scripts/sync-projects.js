@@ -70,18 +70,25 @@ async function fetchMilestoneData(proposalId) {
 async function fetchSnapshotData(proposalId) {
   console.log(`Fetching snapshot data for proposal ${proposalId}`);
 
-  const { data, error } = await supabase
-    .from('snapshots')
-    .select('*')
-    .eq('proposal_id', proposalId)
-    .order('created_at', { ascending: false });
+  try {
+    const response = await axios({
+      method: 'POST',
+      url: `${supabaseUrl}/rest/v1/rpc/getproposalsnapshot`,
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        'Content-Profile': 'public',
+        'x-client-info': 'supabase-js/2.2.3'
+      },
+      data: { _project_id: proposalId }
+    });
 
-  if (error) {
+    return response.data || [];
+  } catch (error) {
     console.error(`Error fetching snapshot data for proposal ${proposalId}:`, error);
     return [];
   }
-
-  return data;
 }
 
 /**
