@@ -1,4 +1,4 @@
-name: Sync Project Data to Sheets
+name: Sync Project Data to CSV Files
 
 on:
   schedule:
@@ -13,8 +13,6 @@ jobs:
       NEXT_PUBLIC_SUPABASE_ANON_KEY2: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY2 }}
       NEXT_PUBLIC_MILESTONES_URL: 'https://milestones.projectcatalyst.io'
       KOIOS_API_KEY: ${{ secrets.KOIOS_API_KEY }}
-      GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
-      GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
     steps:
       - uses: actions/checkout@v3
@@ -30,12 +28,13 @@ jobs:
       - name: Run sync script
         run: node scripts/sync-projects.js
         
-      - name: Commit README changes
+      - name: Commit changes
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add README.md
-          git diff --quiet && git diff --staged --quiet || git commit -m "Update README with latest project data"
+          git add data/*.csv
+          git diff --quiet && git diff --staged --quiet || git commit -m "Update project data in CSV files and README"
           
       - name: Push changes
         uses: ad-m/github-push-action@master

@@ -4,7 +4,7 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const { fetchWalletTransactions } = require('./koiosWrapper');
-const googleSheetsService = require('./googleSheetsService');
+const csvService = require('./csvService');
 const { WebhookClient } = require('discord.js');
 
 // Load project config
@@ -19,26 +19,6 @@ console.log('- URL length:', MILESTONES_BASE_URL.length);
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL2;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY2;
 const supabase = createClient(supabaseUrl, supabaseKey);
-
-/**
- * Retrieves the proposal ID from Supabase.
- */
-async function getProposalId(projectId) {
-  console.log(`Getting proposal ID for project ${projectId}`);
-
-  const { data, error } = await supabase
-    .from('proposals')
-    .select('id')
-    .eq('project_id', projectId)
-    .single();
-
-  if (error) {
-    console.error(`Error fetching proposal ID for project ${projectId}:`, error);
-    return null;
-  }
-
-  return data.id;
-}
 
 /**
  * Retrieves proposal details.
@@ -124,12 +104,29 @@ function calculateMonthlyBudget(proposal, projectConfig) {
   const totalBudget = proposal.budget || 0;
   const monthlyBudget = months > 0 ? totalBudget / months : totalBudget;
 
-  // Calculate collaborator allocations
-  const collaboratorAllocations = projectConfig.collaborators?.map(collaborator => ({
-    name: collaborator.name,
-    allocation: collaborator.allocation,
-    monthlyAmount: monthlyBudget * collaborator.allocation
-  })) || [];
+  // Calculate collaborator amounts
+  const collaboratorAllocations = projectConfig.collaborators?.map(collaborator => {
+    // For new format with direct amount
+    if ('amount' in collaborator) {
+      const totalAmount = collaborator.amount;
+      const monthlyAmount = months > 0 ? totalAmount / months : totalAmount;
+      return {
+        name: collaborator.name,
+        totalAmount,
+        monthlyAmount,
+        allocation: totalBudget > 0 ? totalAmount / totalBudget : 0
+      };
+    }
+    // For backward compatibility with allocation-based format
+    else if ('allocation' in collaborator) {
+      return {
+        name: collaborator.name,
+        allocation: collaborator.allocation,
+        monthlyAmount: monthlyBudget * collaborator.allocation,
+        totalAmount: totalBudget * collaborator.allocation
+      };
+    }
+  }) || [];
 
   return {
     totalBudget,
@@ -244,7 +241,7 @@ async function processProject(projectId) {
     // Calculate remaining funds
     const remainingFunds = proposal.budget - totalReceived;
 
-    // Format milestone data for Google Sheets
+    // Format milestone data for CSV files
     const milestonesForSheet = processedMilestones.map(milestone => [
       projectId,
       proposal.title,
@@ -256,7 +253,7 @@ async function processProject(projectId) {
       milestone.evidenceUrl
     ]);
 
-    // Format transactions for Google Sheets
+    // Format transactions for CSV files
     const transactionsForSheet = transactions.map(tx => [
       projectId,
       proposal.title,
@@ -266,7 +263,7 @@ async function processProject(projectId) {
       tx.metadata
     ]);
 
-    // Format financials for Google Sheets
+    // Format financials for CSV files
     const financialsForSheet = [
       [
         projectId,
@@ -281,7 +278,7 @@ async function processProject(projectId) {
       ]
     ];
 
-    // Format proposal summary for Google Sheets
+    // Format proposal summary for CSV files
     const proposalForSheet = [
       [
         proposal.project_id,
@@ -386,12 +383,13 @@ async function updateReadme(projects) {
       // Collaborator allocations
       if (project.financials.collaboratorAllocations.length > 0) {
         readmeContent += `#### Collaborator Allocations\n\n`;
-        readmeContent += `| Collaborator | Allocation | Monthly Amount |\n`;
-        readmeContent += `|-------------|------------|----------------|\n`;
+        readmeContent += `| Collaborator | Monthly Amount | Total Amount |\n`;
+        readmeContent += `|-------------|----------------|-------------|\n`;
 
         project.financials.collaboratorAllocations.forEach(collaborator => {
-          readmeContent += `| ${collaborator.name} | ${collaborator.allocation * 100}% | `;
-          readmeContent += `${Math.round(collaborator.monthlyAmount)} ADA |\n`;
+          readmeContent += `| ${collaborator.name} | `;
+          readmeContent += `${Math.round(collaborator.monthlyAmount)} ADA | `;
+          readmeContent += `${Math.round(collaborator.totalAmount)} ADA |\n`;
         });
       }
 
@@ -428,7 +426,7 @@ async function main() {
     try {
       const projectData = await processProject(projectId);
 
-      // Accumulate data for sheets
+      // Accumulate data for CSV files
       allMilestones = [...allMilestones, ...projectData.milestonesForSheet];
       allTransactions = [...allTransactions, ...projectData.transactionsForSheet];
       allFinancials = [...allFinancials, ...projectData.financialsForSheet];
@@ -442,30 +440,35 @@ async function main() {
     }
   }
 
-  // Update Google Sheets with processed data
+  // Update CSV files with processed data
   try {
     if (allMilestones.length > 0) {
-      await googleSheetsService.updateSheet('Milestones', allMilestones);
-      console.log('Milestones sheet updated successfully');
+      // Define headers for the CSV files
+      const milestoneHeaders = ['Project ID', 'Project Title', 'Milestone ID', 'Title', 'Description', 'Status', 'Completion Date', 'Evidence URL'];
+      await csvService.updateCsv('milestones', allMilestones, milestoneHeaders);
+      console.log('Milestones CSV file updated successfully');
     }
 
     if (allTransactions.length > 0) {
-      await googleSheetsService.updateSheet('Transactions', allTransactions);
-      console.log('Transactions sheet updated successfully');
+      const transactionHeaders = ['Project ID', 'Project Title', 'Transaction Hash', 'Date', 'Amount', 'Metadata'];
+      await csvService.updateCsv('transactions', allTransactions, transactionHeaders);
+      console.log('Transactions CSV file updated successfully');
     }
 
     if (allFinancials.length > 0) {
-      await googleSheetsService.updateSheet('Financials', allFinancials);
-      console.log('Financials sheet updated successfully');
+      const financialHeaders = ['Project ID', 'Project Title', 'Total Budget', 'Monthly Budget', 'Months', 'Start Date', 'End Date', 'Total Received', 'Remaining Funds'];
+      await csvService.updateCsv('financials', allFinancials, financialHeaders);
+      console.log('Financials CSV file updated successfully');
     }
 
     if (allProposals.length > 0) {
-      await googleSheetsService.updateSheet('Proposals', allProposals);
-      console.log('Proposals sheet updated successfully');
+      const proposalHeaders = ['Project ID', 'Title', 'Budget', 'Funds Distributed', 'Remaining Funds', 'Milestones Quantity', 'Milestone URL'];
+      await csvService.updateCsv('proposals', allProposals, proposalHeaders);
+      console.log('Proposals CSV file updated successfully');
     }
   } catch (error) {
-    console.error('Error updating Google Sheets:', error);
-    await sendDiscordNotification(`⚠️ Error updating Google Sheets: ${error.message}`);
+    console.error('Error updating CSV files:', error);
+    await sendDiscordNotification(`⚠️ Error updating CSV files: ${error.message}`);
     process.exit(1);
   }
 
@@ -484,7 +487,7 @@ async function main() {
   const notificationMessage = `✅ Catalyst monitoring update completed!\n` +
     `- ${totalProjects} projects processed\n` +
     `- ${completedMilestones}/${totalMilestones} milestones completed\n` +
-    `- Data updated in Google Sheets and README`;
+    `- Data updated in CSV files and README`;
 
   await sendDiscordNotification(notificationMessage);
 

@@ -1,8 +1,81 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { google } from 'googleapis';
+import fs from 'fs';
+import path from 'path';
+
+// Initialize CsvService (reimplementing needed parts to fix module system compatibility)
+class CsvService {
+    private dataDir: string;
+    private initialized: boolean;
+
+    constructor() {
+        this.dataDir = path.join(process.cwd(), 'data');
+        this.initialized = false;
+    }
+
+    async initialize(): Promise<void> {
+        if (this.initialized) return;
+
+        try {
+            if (!fs.existsSync(this.dataDir)) {
+                fs.mkdirSync(this.dataDir, { recursive: true });
+            }
+            this.initialized = true;
+        } catch (error) {
+            console.error('Error initializing CSV Service:', error);
+            throw error;
+        }
+    }
+
+    async readCsv(fileName: string): Promise<string[][]> {
+        await this.initialize();
+
+        try {
+            const filePath = path.join(this.dataDir, `${fileName}.csv`);
+
+            // Check if file exists
+            if (!fs.existsSync(filePath)) {
+                return [];
+            }
+
+            // Read and parse CSV
+            const content = fs.readFileSync(filePath, 'utf8');
+            const rows = content.split('\n').map(row =>
+                // Handle quoted fields containing commas
+                row.match(/(".*?"|[^",]+)(?=\s*,|\s*$)/g)?.map(field =>
+                    field.startsWith('"') && field.endsWith('"') ?
+                        field.slice(1, -1).replace(/""/g, '"') :
+                        field
+                ) || []
+            );
+
+            return rows;
+        } catch (error) {
+            console.error(`Error reading CSV file ${fileName}:`, error);
+            throw error;
+        }
+    }
+}
+
+const csvService = new CsvService();
+
+// Define types for our data structures
+interface Record {
+    project_id: string;
+    [key: string]: string;
+}
+
+interface CompleteProjectData {
+    // Base project properties
+    [key: string]: string | Record[] | Record;
+    project_id: string;
+    // Relationships
+    milestones: Record[];
+    transactions: Record[];
+    financials: Record;
+}
 
 /**
- * API route to fetch project data from Google Sheets
+ * API route to fetch project data from CSV files
  * GET /api/projects - Returns all projects
  * GET /api/projects?id=1000107 - Returns a specific project
  */
@@ -12,40 +85,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     try {
-        // Initialize Google Sheets API
-        let credentials;
-        if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
-            credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
-        } else if (process.env.GOOGLE_SERVICE_ACCOUNT) {
-            // Fallback for backward compatibility
-            credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT || '{}');
-        } else {
-            credentials = {};
-        }
-
-        const auth = new google.auth.GoogleAuth({
-            credentials,
-            scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-        });
-
-        const sheets = google.sheets({ version: 'v4', auth: await auth.getClient() });
-        const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-
         // Check if a specific project ID is requested
         const projectId = req.query.id as string;
 
-        // Fetch proposal data
-        const proposalsResponse = await sheets.spreadsheets.values.get({
-            spreadsheetId,
-            range: 'Proposals!A1:Z',
-        });
+        // Fetch proposal data from CSV
+        const proposalsData = await csvService.readCsv('Proposals');
 
-        const proposalsData = proposalsResponse.data.values || [];
+        if (!proposalsData.length) {
+            return res.status(404).json({ error: 'No project data found' });
+        }
+
         const headers = proposalsData[0];
-        const proposals = proposalsData.slice(1).map(row => {
-            const proposal: Record<string, any> = {};
+        const proposals: Record[] = proposalsData.slice(1).map(row => {
+            const proposal: Record = { project_id: '' };
             headers.forEach((header: string, index: number) => {
-                proposal[header] = row[index];
+                proposal[header] = row[index] || '';
             });
             return proposal;
         });
@@ -63,66 +117,55 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const projectsWithDetails = await Promise.all(
             filteredProposals.map(async (proposal) => {
                 // Fetch milestones
-                const milestonesResponse = await sheets.spreadsheets.values.get({
-                    spreadsheetId,
-                    range: 'Milestones!A1:Z',
-                });
-
-                const milestonesData = milestonesResponse.data.values || [];
+                const milestonesData = await csvService.readCsv('Milestones');
                 const milestoneHeaders = milestonesData[0];
-                const milestones = milestonesData.slice(1)
+                const milestones: Record[] = milestonesData.slice(1)
                     .filter(row => row[0] === proposal.project_id)
                     .map(row => {
-                        const milestone: Record<string, any> = {};
+                        const milestone: Record = { project_id: proposal.project_id };
                         milestoneHeaders.forEach((header: string, index: number) => {
-                            milestone[header] = row[index];
+                            milestone[header] = row[index] || '';
                         });
                         return milestone;
                     });
 
                 // Fetch transactions
-                const transactionsResponse = await sheets.spreadsheets.values.get({
-                    spreadsheetId,
-                    range: 'Transactions!A1:Z',
-                });
-
-                const transactionsData = transactionsResponse.data.values || [];
+                const transactionsData = await csvService.readCsv('Transactions');
                 const transactionHeaders = transactionsData[0];
-                const transactions = transactionsData.slice(1)
+                const transactions: Record[] = transactionsData.slice(1)
                     .filter(row => row[0] === proposal.project_id)
                     .map(row => {
-                        const transaction: Record<string, any> = {};
+                        const transaction: Record = { project_id: proposal.project_id };
                         transactionHeaders.forEach((header: string, index: number) => {
-                            transaction[header] = row[index];
+                            transaction[header] = row[index] || '';
                         });
                         return transaction;
                     });
 
                 // Fetch financials
-                const financialsResponse = await sheets.spreadsheets.values.get({
-                    spreadsheetId,
-                    range: 'Financials!A1:Z',
-                });
-
-                const financialsData = financialsResponse.data.values || [];
+                const financialsData = await csvService.readCsv('Financials');
                 const financialHeaders = financialsData[0];
-                const financials = financialsData.slice(1)
+                const financialsArray = financialsData.slice(1)
                     .filter(row => row[0] === proposal.project_id)
                     .map(row => {
-                        const financial: Record<string, any> = {};
+                        const financial: Record = { project_id: proposal.project_id };
                         financialHeaders.forEach((header: string, index: number) => {
-                            financial[header] = row[index];
+                            financial[header] = row[index] || '';
                         });
                         return financial;
-                    })[0] || {};
+                    });
 
-                // Return complete project data
-                return {
+                const financials: Record = financialsArray[0] || { project_id: proposal.project_id };
+
+                // Create complete project data with proper type handling
+                const projectWithDetails: CompleteProjectData = {
                     ...proposal,
                     milestones,
                     transactions,
                     financials,
                 };
+
+                return projectWithDetails;
             })
         );
 
