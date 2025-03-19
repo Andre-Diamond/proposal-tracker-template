@@ -359,22 +359,6 @@ async function processProject(projectId) {
       financials.organizationFunds
     ]);
 
-    // Format financials for CSV files
-    const financialsForSheet = [
-      [
-        projectId,
-        proposal.title,
-        financials.totalBudget,
-        financials.monthlyBudget,
-        financials.months,
-        financials.startDate,
-        financials.endDate,
-        totalReceived,
-        remainingFunds,
-        financials.organizationFunds
-      ]
-    ];
-
     // Format proposal summary for CSV files
     const proposalForSheet = [
       [
@@ -397,7 +381,6 @@ async function processProject(projectId) {
       financials,
       milestonesForSheet,
       transactionsForSheet,
-      financialsForSheet,
       proposalForSheet,
       collaboratorsForSheet
     };
@@ -444,7 +427,6 @@ async function main() {
 
   let allMilestones = [];
   let allTransactions = [];
-  let allFinancials = [];
   let allProposals = [];
   let allCollaborators = [];
   let processedProjects = [];
@@ -456,7 +438,6 @@ async function main() {
       // Accumulate data for CSV files
       allMilestones = [...allMilestones, ...projectData.milestonesForSheet];
       allTransactions = [...allTransactions, ...projectData.transactionsForSheet];
-      allFinancials = [...allFinancials, ...projectData.financialsForSheet];
       allProposals = [...allProposals, ...projectData.proposalForSheet];
       allCollaborators = [...allCollaborators, ...projectData.collaboratorsForSheet];
 
@@ -528,23 +509,6 @@ async function main() {
       console.log('Transactions CSV file updated successfully');
     }
 
-    if (allFinancials.length > 0) {
-      const financialHeaders = [
-        'Project ID',
-        'Project Title',
-        'Total Budget',
-        'Monthly Budget',
-        'Months',
-        'Start Date',
-        'End Date',
-        'Total Received',
-        'Remaining Funds',
-        'Organization Funds'
-      ];
-      await csvService.updateCsv('financials', allFinancials, financialHeaders);
-      console.log('Financials CSV file updated successfully');
-    }
-
     // Add global financials sheet
     if (globalFinancialsForSheet.length > 0) {
       const globalFinancialHeaders = [
@@ -593,7 +557,11 @@ async function main() {
     (sum, project) => sum + project.milestones.length, 0
   );
   const completedMilestones = processedProjects.reduce(
-    (sum, project) => sum + project.milestones.filter(m => m.isCompleted).length, 0
+    (sum, project) => sum + project.milestones.filter(m =>
+      m.outputs_approved &&
+      m.success_criteria_approved &&
+      m.evidence_approved
+    ).length, 0
   );
   const totalCollaborators = allCollaborators.length;
 
