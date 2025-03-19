@@ -1,8 +1,31 @@
 {
   "projects": [
     {
-      "project_id": "project_1",
-      "wallet_address": "addr1q9ueyzay8nrskkfntpt30nvd9a0fdgm9fy940d35mcz4duzqu5v8ar866f0jksfkty3mqx4uvpge6865htlcf8eeatlqlq69gt"
+      "project_id": "1000107",
+      "wallet": "addr1q9ueyzay8nrskkfntpt30nvd9a0fdgm9fy940d35mcz4duzqu5v8ar866f0jksfkty3mqx4uvpge6865htlcf8eeatlqlq69gt",
+      "collaborators": [
+        {
+          "name": "Collaborator 1",
+          "allocation": 0.7
+        },
+        {
+          "name": "Collaborator 2",
+          "allocation": 0.3
+        }
+      ],
+      "dateRanges": {
+        "start": "2023-01-01",
+        "end": "2024-12-31"
+      }
     }
-  ]
+  ],
+  "globalSettings": {
+    "monthlyBudget": 5000,
+    "organizations": [
+      {
+        "name": "Example Organization",
+        "monthlyBudget": 10000
+      }
+    ]
+  }
 }
