@@ -267,41 +267,44 @@ async function processProject(projectId) {
         const milestoneData = await fetchMilestoneData(projectId, snapshot.milestone);
 
         processedMilestones.push({
-          id: snapshot.milestone,
-          title: `Milestone ${snapshot.milestone}`,
-          description: snapshot.description || '',
-          isCompleted:
-            milestoneData?.[0]?.som_reviews?.[0]?.outputs_approves &&
-            milestoneData?.[0]?.som_reviews?.[0]?.success_criteria_approves &&
-            milestoneData?.[0]?.som_reviews?.[0]?.evidence_approves,
-          completionDate: snapshot.completion_date || '',
-          evidenceUrl: snapshot.evidence_url || '',
-          month: milestoneData?.[0]?.month,
-          cost: milestoneData?.[0]?.cost,
-          completion: milestoneData?.[0]?.completion,
+          title: proposal.title,
+          project_id: projectId,
+          milestone: snapshot.milestone,
+          month: milestoneData?.[0]?.month || snapshot.milestone,
+          cost: milestoneData?.[0]?.cost || Math.round(proposal.budget / proposal.milestones_qty),
+          completion: milestoneData?.[0]?.completion || 0,
+          budget: proposal.budget,
+          funds_distributed: proposal.funds_distributed || 0,
+          milestones_qty: proposal.milestones_qty,
+          som_signoff_count: snapshot.som_signoff_count || 0,
+          poa_signoff_count: snapshot.poa_signoff_count || 0,
           outputs_approved: milestoneData?.[0]?.som_reviews?.[0]?.outputs_approves || false,
           success_criteria_approved: milestoneData?.[0]?.som_reviews?.[0]?.success_criteria_approves || false,
           evidence_approved: milestoneData?.[0]?.som_reviews?.[0]?.evidence_approves || false,
-          poa_content_approved: milestoneData?.[0]?.poas?.[0]?.poas_reviews?.[0]?.content_approved || false
+          poa_content_approved: milestoneData?.[0]?.poas?.[0]?.poas_reviews?.[0]?.content_approved || false,
+          milestones_link: `${MILESTONES_BASE_URL}/projects/${projectId}`
         });
       }
     } else {
       // For new proposals without milestone data yet
       for (let i = 1; i <= proposal.milestones_qty; i++) {
         processedMilestones.push({
-          id: i,
-          title: `Milestone ${i}`,
-          description: '',
-          isCompleted: false,
-          completionDate: '',
-          evidenceUrl: '',
+          title: proposal.title,
+          project_id: projectId,
+          milestone: i,
           month: i,
           cost: Math.round(proposal.budget / proposal.milestones_qty),
           completion: 0,
+          budget: proposal.budget,
+          funds_distributed: proposal.funds_distributed || 0,
+          milestones_qty: proposal.milestones_qty,
+          som_signoff_count: 0,
+          poa_signoff_count: 0,
           outputs_approved: false,
           success_criteria_approved: false,
           evidence_approved: false,
-          poa_content_approved: false
+          poa_content_approved: false,
+          milestones_link: `${MILESTONES_BASE_URL}/projects/${projectId}`
         });
       }
     }
@@ -314,14 +317,21 @@ async function processProject(projectId) {
 
     // Format milestone data for CSV files
     const milestonesForSheet = processedMilestones.map(milestone => [
-      projectId,
-      proposal.title,
-      milestone.id,
       milestone.title,
-      milestone.description,
-      milestone.isCompleted ? 'Completed' : 'Pending',
-      milestone.completionDate,
-      milestone.evidenceUrl
+      milestone.project_id,
+      milestone.milestone,
+      milestone.month,
+      milestone.cost,
+      milestone.completion,
+      milestone.budget,
+      milestone.funds_distributed,
+      milestone.milestones_qty,
+      milestone.som_signoff_count || 0,
+      milestone.poa_signoff_count || 0,
+      milestone.outputs_approved,
+      milestone.success_criteria_approved,
+      milestone.evidence_approved,
+      milestone.poa_content_approved
     ]);
 
     // Format transactions for CSV files
@@ -443,7 +453,23 @@ async function main() {
   try {
     if (allMilestones.length > 0) {
       // Define headers for the CSV files
-      const milestoneHeaders = ['Project ID', 'Project Title', 'Milestone ID', 'Title', 'Description', 'Status', 'Completion Date', 'Evidence URL'];
+      const milestoneHeaders = [
+        'title',
+        'project_id',
+        'milestone',
+        'month',
+        'cost',
+        'completion',
+        'budget',
+        'funds_distributed',
+        'milestones_qty',
+        'som_signoff_count',
+        'poa_signoff_count',
+        'outputs_approved',
+        'success_criteria_approved',
+        'evidence_approved',
+        'poa_content_approved'
+      ];
       await csvService.updateCsv('milestones', allMilestones, milestoneHeaders);
       console.log('Milestones CSV file updated successfully');
     }
